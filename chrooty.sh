@@ -1,88 +1,110 @@
 #!/bin/zsh
 # 26 july 2016
-# script to help copy over libraries to make a chroot
-. /my/functions/init
+#
+# script to help copy over libraries to make a chroot.
+#
+# by default, does not touch anything. merely prints shell commands
+# to stdout.
+#
+#
+#
 
-function chrooty {
-    program=${1:?}
-
-    ldd "$program" \
-    | tr ' \t' '\n' \
-    | grep '/' \
-    | while read i; do
-        #printf -- "cp -n --parents %q .\n" "$i"
-        echo $i
-    done
-
-    return $r
+function error {
+    printf -- "\002\033[38;5;124m\003[!]\002\033[m\003 %s\n" "$*" >&2
 }
 
 function formatty {
-    awk '{ printf "%3d\t%s\n", length($0), $0 }' \
-    | awk '{ if (!seen[$0]++) print }' \
-    | sort -n \
-    | sed 's~^ *[0-9]\+\t~~'
-}
-
-function shellify {
-    if [[ $hardlinks -eq 1 ]] {
-        while read line; do
-            dirs=".$(dirname $line)"
-            [ ! -e "$dirs" ] && printf -- "mkdir -p '%s'\n" "$dirs"
-            printf -- "ln '%s' '.%s'\n" "$line" "$line"
-        done
+    # if no target dir given for the files, use cp's --parents flag
+    # to give us a sweet dir structure. used for libraries, not for
+    # binaries, because in a chroot i personally prefer just having
+    # everything in /bin rather than /bin, /usr/sbin, /usr/local/bin etc
+    if [[ -z $1 ]] {
+        target_dir='.'
+        cpflags=( -n --parents )
     } else {
-        while read line; do
-            printf -- "cp -n --parents %s .\n" "$line"
-        done
+        target_dir=$1
+        cpflags=( -n )
+        [ -d $target_dir ] || printf -- "mkdir %q\n" "$target_dir"
     }
+    awk '{ if (!seen[$0]++) print }' \
+    | sed 's~^ *[0-9]\+\t~~' \
+    | while read line
+    do
+        printf -- "cp $cpflags %q %q\n" "$line" "$target_dir"
+    done
+}
+
+function bin_formatty {
+    awk '{ if (!seen[$0]++) print }' \
+    | sed 's~^ *[0-9]\+\t~~' \
+    | while read line
+    do
+        printf -- "cp -n %q ./bin\n" "$line"
+    done
+}
+
+function chrooty {
+    prog=$(hash -v ${1:?} 2>/dev/null)
+    prog=${prog/*=}
+
+    if [[ -z $prog ]] {
+        error "$1: command not found, or not in hash table at least"
+        return 1
+    }
+
+    # the executable itself
+    printf -- "%s\n" "$prog" >> $binaries
+
+    # get the libraries
+    ldd $prog | tr '\t ' '\n' | grep / >> $libraries
+
 }
 
 
-if [[ "X$1" = "X-h" ]] {
-    hardlinks=1
-    shift
-} else {
-    hardlinks=0
-}
+coreutils=(
+    arch        base64      basename    cat
+    chcon       chgrp       chmod       chown       chroot
+    cksum       comm        cp          csplit      cut
+    date        dd          df          dir         dircolors
+    dirname     du          echo        env         expand
+    expr        factor      false       fmt         fold
+    groups      head        hostid      hostname    id
+    install     join        kill        link        ln
+    logname     ls          md5sum      mkdir       mkfifo
+    mknod       mktemp      mv          nice        nl
+    nohup       nproc       od          paste       pathchk
+    pinky       pr          printenv    printf      ptx
+    pwd         readlink    realpath    rm          rmdir
+    runcon      seq         sha1sum     sha224sum   sha256sum
+    sha384sum   sha512sum   shred       shuf        sleep
+    sort        split       stat        stdbuf      stty
+    sum         sync        tac         tail        tee
+    test        timeout     touch       tr          true
+    truncate    tsort       tty         uname       unexpand
+    uniq        unlink      uptime      users       vdir
+    wc          who         whoami      yes
+)
 
-if [[ "$@" = 'coreutils' ]] {
-    progs=(
-        arch        base64      basename    cat
-        chcon       chgrp       chmod       chown       chroot
-        cksum       comm        cp          csplit      cut
-        date        dd          df          dir         dircolors
-        dirname     du          echo        env         expand
-        expr        factor      false       fmt         fold
-        groups      head        hostid      hostname    id
-        install     join        kill        link        ln
-        logname     ls          md5sum      mkdir       mkfifo
-        mknod       mktemp      mv          nice        nl
-        nohup       nproc       od          paste       pathchk
-        pinky       pr          printenv    printf      ptx
-        pwd         readlink    realpath    rm          rmdir
-        runcon      seq         sha1sum     sha224sum   sha256sum
-        sha384sum   sha512sum   shred       shuf        sleep
-        sort        split       stat        stdbuf      stty
-        sum         sync        tac         tail        tee
-        test        timeout     touch       tr          true
-        truncate    tsort       tty         uname       unexpand
-        uniq        unlink      uptime      users       vdir
-        wc          who         whoami      yes
-    )
-    progs=( $coreutils "$@" )
-} else {
-    progs=( "$@" )
-}
 
-for i in ${progs:?}
+
+
+libraries=$(mktemp /tmp/chrooty.libs.XXXXXXXXXX)
+binaries=$(mktemp  /tmp/chrooty.bins.XXXXXXXXXX)
+
+for i in ${@:?need a program for argv1}
 do
-    if [[ ! -e "$i" ]] {
-        p="$(hash -v $i | awk -F '=' '{ print $2 }')"
-    }
-    printf -- "%q\n" "$p"
-    chrooty "$p"
-done | formatty | shellify
+    if [[ "$i" = 'coreutils' ]]
+    then
+        for o in $coreutils; do chrooty $o; done
+    else
+        chrooty $i
+    fi
+done
 
+# this keeps the dir structure of the libraries, but puts all the
+# binaries into /bin
+sort $libraries | formatty
+sort $binaries  | formatty './bin'
 
-
+# temp files
+rm -f $libraries $binaries
