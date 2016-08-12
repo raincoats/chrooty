@@ -26,20 +26,12 @@ function formatty {
         cpflags=( -n )
         [ -d $target_dir ] || printf -- "mkdir %q\n" "$target_dir"
     }
+    
     awk '{ if (!seen[$0]++) print }' \
     | sed 's~^ *[0-9]\+\t~~' \
     | while read line
     do
         printf -- "cp $cpflags %q %q\n" "$line" "$target_dir"
-    done
-}
-
-function bin_formatty {
-    awk '{ if (!seen[$0]++) print }' \
-    | sed 's~^ *[0-9]\+\t~~' \
-    | while read line
-    do
-        printf -- "cp -n %q ./bin\n" "$line"
     done
 }
 
