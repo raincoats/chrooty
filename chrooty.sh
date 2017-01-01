@@ -13,6 +13,35 @@ function error {
     printf -- "\002\033[38;5;124m\003[!]\002\033[m\003 %s\n" "$*" >&2
 }
 
+# makes a minimal /etc folder with a few files
+function make_etc {
+    [[ $PWD =~ ^/+$ ]] && {
+        error 'not making etc folder from /, don’t want to fuck your computer!'
+        exit 1
+    }
+
+    # 'test -e passwd || echo "root:x:0:0::/:/bin/sh" > passwd'
+    # 'test -e resolv.conf || echo "nameserver 8.8.8.8" > resolv.conf'
+
+    files=(
+        passwd
+        resolv.conf
+        services
+        hosts
+        hostname
+        group
+        issue
+    )
+
+    printf -- "%s\n" 'mkdir ./etc'
+
+    for i in $files
+    do
+        printf -- "cp %-50q ./etc\n" "/etc/$i"
+    done
+
+}
+
 function formatty {
     # if no target dir given for the files, use cp's --parents flag
     # to give us a sweet dir structure. used for libraries, not for
@@ -24,19 +53,19 @@ function formatty {
     } else {
         target_dir=$1
         cpflags=( -n )
-        [ -d $target_dir ] || printf -- "mkdir %q\n" "$target_dir"
+        [ -d $target_dir ] || printf -- "mkdir %15q\n" "$target_dir"
     }
     
     awk '{ if (!seen[$0]++) print }' \
     | sed 's~^ *[0-9]\+\t~~' \
     | while read line
     do
-        printf -- "cp $cpflags %q %q\n" "$line" "$target_dir"
+        printf -- "%-15s %-37q %q\n" "cp $cpflags" "$line" "$target_dir"
     done
 }
 
 function chrooty {
-    prog=$(hash -v ${1:?} 2>/dev/null)
+    prog=$(hash -v $(basename ${1:?}) 2>/dev/null)
     prog=${prog/*=}
 
     if [[ -z $prog ]] {
@@ -83,11 +112,27 @@ coreutils=(
 libraries=$(mktemp /tmp/chrooty.libs.XXXXXXXXXX)
 binaries=$(mktemp  /tmp/chrooty.bins.XXXXXXXXXX)
 
-for i in ${@:?need a program for argv1}
+args="${@:?need a program for argv1}"
+
+cat << EOF
+#!/bin/sh -e
+#
+# this script was generated at $(date +%T\ %D),
+# with args: '$0 $args'
+#
+# https://github.com/raincoats/chrooty
+#
+
+EOF
+
+for i in $@
 do
     if [[ "$i" = 'coreutils' ]]
     then
         for o in $coreutils; do chrooty $o; done
+    elif [[ "$i" = 'etc' ]]; then
+        printf -- "#\n# /etc\n#\n"
+        make_etc
     else
         chrooty $i
     fi
@@ -95,7 +140,9 @@ done
 
 # this keeps the dir structure of the libraries, but puts all the
 # binaries into /bin
+printf -- "#\n# libraries\n#\n"
 sort $libraries | formatty
+printf -- "#\n# binaries\n#\n"
 sort $binaries  | formatty './bin'
 
 # temp files
